@@ -21,11 +21,19 @@ import glob
 #from matplotlib import pyplot as plt
 import time as time_lib
 #%%
+
+
+#%%
 myddir = 'G:\G-Drive\MODIS_LST\myd11C3\Resampled'
 moddir = 'G:\G-Drive\MODIS_LST\MOD11C3\Resampled'
 era5dir = 'G:\G-Drive\Python_folder\ERA5_data\skin_temp_monthly_mean_by_hour'
 outdir = 'G:\G-Drive\Python_folder\LST_ERA_gapfill\ERA_MODIS_extracted_20210328'
 yaers = list(range(2003, 2021))
+
+#%%
+#define a function to read raster data or import from the list of functions file
+from lst_era_fill_functions import pixcenters_raster, read_raster_data, read_raster_nodata
+
 for yr in yaers:
     era5file = 'ERA5_skin_temperature_Nepal_' + str(yr) +'.nc'
     era5file = os.path.join(era5dir, era5file)
@@ -68,28 +76,6 @@ for yr in yaers:
     myd_view_time_filelist=glob.glob(myd_search_view_time_items)
     
     #%%
-    # define a function to read lat and lon values as center of pixels 
-    def pixcenters_raster(rasterfile):
-        ds = gdal.Open(rasterfile)
-        width = ds.RasterXSize
-        height = ds.RasterYSize
-        gt = ds.GetGeoTransform()
-        gt = np.asarray(gt)
-        
-        lat_rows = np.arange(1,height+1).reshape(-1,1)
-        lon_cols = np.arange(1,width+1).reshape(-1,1)
-        
-        cols_mat = np.concatenate((np.tile(1, (width, 1)), lon_cols, np.tile(1, (width,1))),axis=1)
-        lons = cols_mat @ gt[:3].reshape(-1,1)
-        lons_adj = lons - gt[1]/2
-        
-        rows_mat = np.concatenate((np.tile(1, (height, 1)), np.tile(1, (height,1)), lat_rows),axis=1)
-        lats = rows_mat @ gt[3:].reshape(-1,1)
-        lats_adj = lats - gt[5]/2
-        
-        ds = None
-        
-        return lons_adj, lats_adj
     
     londata_modis, latdata_modis = pixcenters_raster(mod_lst_filelist[0])
     #%%
@@ -105,17 +91,10 @@ for yr in yaers:
         
         pos = re.search('C3.A', mod_view_time_file)
         
-        ds = gdal.Open(mod_view_time_file)
-        band = ds.GetRasterBand(1)
-        time_nodata = band.GetNoDataValue()
-        time_mod = band.ReadAsArray()
-        ds = None
-        
-        ds = gdal.Open(myd_view_time_file)
-        band = ds.GetRasterBand(1)
-        time_myd = band.ReadAsArray()
-        ds = None
-        
+        time_nodata = read_raster_nodata(mod_view_time_file)
+        time_mod = read_raster_data(mod_view_time_file)
+        time_myd = read_raster_data(myd_view_time_file)
+
         time_mod_mean = time_mod[time_mod != time_nodata].mean()
         time_myd_mean = time_myd[time_myd != time_nodata].mean()
         
@@ -133,32 +112,19 @@ for yr in yaers:
         time_list.append(myd_datenum)
         
         mod_lst_file = mod_lst_filelist[2*fn]
-        #print(mod_lst_file[39:])
-        ds = gdal.Open(mod_lst_file)
-        band = ds.GetRasterBand(1)
-        lst_nodata = band.GetNoDataValue()
-        mod_lst_data = ds.ReadAsArray()
-        ds = None
-        
+        lst_nodata = read_raster_nodata(mod_lst_file)
+        mod_lst_data = read_raster_data(mod_lst_file)
+
         myd_lst_file = myd_lst_filelist[2*fn]
-        #print(myd_lst_file[39:])
-        ds = gdal.Open(myd_lst_file)
-        myd_lst_data = ds.ReadAsArray()
-        ds = None
+        myd_lst_data = read_raster_data(myd_lst_file)
         
         mod_qc_file = mod_qc_filelist[2*fn]
-        ds = gdal.Open(mod_qc_file)
-        mod_qc_data = ds.ReadAsArray()
-        band = ds.GetRasterBand(1)
-        qc_nodata = band.GetNoDataValue()
-        
-        ds = None
-        
+        qc_nodata = read_raster_nodata(mod_qc_file)
+        mod_qc_data = read_raster_data(mod_qc_file)
+
         myd_qc_file = myd_qc_filelist[2*fn]
-        ds = gdal.Open(myd_qc_file)
-        myd_qc_data = ds.ReadAsArray()
-        ds = None
-        
+        myd_qc_data = read_raster_data(myd_qc_file)
+
         lst_timeseries[4*fn, :, :] = mod_lst_data
         lst_timeseries[4*fn+1, :, :] = myd_lst_data
         
@@ -172,17 +138,9 @@ for yr in yaers:
         
         pos = re.search('C3.A', mod_view_time_file)
         
-        ds = gdal.Open(mod_view_time_file)
-        band = ds.GetRasterBand(1)
-        time_mod = band.ReadAsArray()
-        time_nodata = band.GetNoDataValue()
-        ds = None
-        
-        
-        ds = gdal.Open(myd_view_time_file)
-        band = ds.GetRasterBand(1)
-        time_myd = band.ReadAsArray()
-        ds = None
+        time_mod = read_raster_data(mod_view_time_file)
+        time_nodata = read_raster_nodata(mod_view_time_file)
+        time_myd = read_raster_data(myd_view_time_file)
         
         time_mod_mean = time_mod[time_mod != time_nodata].mean()
         time_myd_mean = time_myd[time_myd != time_nodata].mean()
@@ -201,26 +159,16 @@ for yr in yaers:
         time_list.append(myd_datenum)
         
         mod_lst_file = mod_lst_filelist[2*fn+1]
-        #print(mod_lst_file[39:])
-        ds = gdal.Open(mod_lst_file)
-        mod_lst_data = ds.ReadAsArray()
-        ds = None
-        
+        mod_lst_data = read_raster_data(mod_lst_file)
+
         myd_lst_file = myd_lst_filelist[2*fn*1]
-        #print(myd_lst_file[39:])
-        ds = gdal.Open(myd_lst_file)
-        myd_lst_data = ds.ReadAsArray()
-        ds = None
+        myd_lst_data = read_raster_data(myd_lst_file)
         
         mod_qc_file = mod_qc_filelist[2*fn+1]
-        ds = gdal.Open(mod_qc_file)
-        mod_qc_data = ds.ReadAsArray()
-        ds = None
+        mod_qc_data = read_raster_data(mod_qc_file)
         
         myd_qc_file = myd_qc_filelist[2*fn+1]
-        ds = gdal.Open(myd_qc_file)
-        myd_qc_data = ds.ReadAsArray()
-        ds = None
+        myd_qc_data = read_raster_data(myd_qc_file)
         
         lst_timeseries[4*fn+2, :, :] = mod_lst_data
         lst_timeseries[4*fn+3, :, :] = myd_lst_data
@@ -330,4 +278,3 @@ for yr in yaers:
     
     time_lib.sleep(30)
 
-#%%
