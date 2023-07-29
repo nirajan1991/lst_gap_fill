@@ -15,8 +15,7 @@ from tqdm import tqdm
 #%%
 #First define the functions that are used for gap filling
 #Define a functin to convert one sample data from netcdf file to geotiff file
-#It is required to
-#For interpolation of ERA5 data I will need a raster file from the era5 data
+#It is required for interpolation of ERA5 data, I will need a raster file from the era5 data
 #So save first layer of the file as raster file
 
 def nc2gtiff(ncfile,ncvar,proj):
@@ -48,23 +47,10 @@ def nc2gtiff(ncfile,ncvar,proj):
     tif_ds.GetRasterBand(1).SetNoDataValue(-32767)
     tif_ds.GetRasterBand(1).WriteArray(era_data_layer)
     tif_ds.FlushCache()
+    ds.close()
     ds = None
     tif_ds = None
     return tiffile
-#%%
-'''
-#This method did not give output. neither threw error
-#Further, using QGIS gave output but the values are flipped in both updown and leftright direction
-
-#import subprocess
-def nc2gtiff(ncfile, ncvar, band):
-    outfile = ncfile[:-3] + '_band' + str(band) + '.tif'
-    command = 'gdal_translate -a_srs EPSG:4326 -ot Float32 -unscale -co COMPRESS=deflate -of GTiff -a_nodata -32767 -b ' + str(band) + ' "NETCDF:' + '\'' + ncfile + '\'' +':' + ncvar + '" ' + outfile
-    subprocess.call(command,shell = True)
-    return command
-#gdal_translate -a_srs EPSG:4326 -a_nodata -32767.0 -ot Float32 -of GTiff -b 1 "NETCDF:\"G:\\G-Drive\\Python_folder\\LST_ERA_gapfill\\ERA_MODIS_extracted_20210328\\download_skt_band1.nc\":/era5land/skt" C:/Users/Nirajan/AppData/Local/Temp/processing_zKlbnY/209f78fe9bdc4eb8a7469821e678f68b/OUTPUT.tif
-indices = list(itertools.product(range(window_xsize),range(window_ysize)))
-'''
 #%%
 # define a function to read lat and lon values as center of pixels
 def pixcenters_raster(rasterfile):
@@ -90,7 +76,22 @@ def pixcenters_raster(rasterfile):
     return lons_adj, lats_adj
 
 #%%
-#Redefine distance
+# define a function to read only data from raster
+def read_raster_data(file):
+    ds = gdal.Open(file)
+    data = ds.ReadAsArray()
+    ds = None
+    return data
+
+def read_raster_nodata(file):
+    ds = gdal.Open(file)
+    band = ds.GetRasterBand(1)
+    nodata = band.GetNoDataValue()
+    ss = None
+    return nodata
+
+#%%
+#define distance function
 #The function was obtained from Martin Thomas' answer in the link and replaced math by numpy
 #https://stackoverflow.com/questions/19412462/getting-distance-between-two-points-based-on-latitude-longitude
 
@@ -130,35 +131,8 @@ def interpolate_params(era_file, modis_file):
     lon_modis, lat_modis = pixcenters_raster(modis_file)
     lon_era, lat_era = pixcenters_raster(era_file)
     #%%
-    '''
-    indices = list(itertools.product(lon_modis,lat_modis)) #cannot change to numpy array at once
-    indices_np = np.asarray(indices) #It will be 3d
-    indices_np_2d = indices_np.reshape(-1,2)
-
-    #I need the type of indexing with decimel so I did not use rastetio's index method
-    #https://gis.stackexchange.com/questions/221292/retrieve-pixel-value-with-geographic-coordinate-as-input-with-gdal/221430
-    col = (indices_np_2d[:,0] - xOrigin)/pixelWidth
-    row = (yOrigin - indices_np_2d[:,1])/pixelHeight
-
-    c1 = lat_era[np.floor(row).astype(int)],lon_era[np.floor(col).astype(int)]
-    c2 = lat_era[np.floor(row).astype(int)],lon_era[np.ceil(col).astype(int)]
-    c3 = lat_era[np.ceil(row).astype(int)],lon_era[np.floor(col).astype(int)]
-    c4 = lat_era[np.ceil(row).astype(int)],lon_era[np.ceil(col).astype(int)]
-    #c11 = np.squeeze(np.array(c1), axis=(2,)).transpose() #np.array(c1) only creates 3 d np array with 2nd dimension as main dimension, so need to squeeze and transpose too
-
-    #calculate distance of each era pixel center from modis data center
-    modis_centers = indices_np_2d[:,1].reshape(-1,1),indices_np_2d[:,0].reshape(-1,1)
-
-    d1 = distance(c1, modis_centers)
-    d2 = distance(c2, modis_centers)
-    d3 = distance(c3, modis_centers)
-    d4 = distance(c4, modis_centers)
-    dmax = distance(c1, c4)
-
-    '''
-    #%%
+    
     #Vectorizing the process created hussle as the original pixel retrival was nontrivial
-
     #So create function to extract the row col value of each pixel at the pixel (2D)
 
     lon_modis_mesh, lat_modis_mesh = np.meshgrid(lon_modis,lat_modis)
@@ -271,6 +245,7 @@ def decode_qc(qcbits):
                      'err3plus': list(lst_error_morethan3),
                      'cloud': list(lst_cloud),
                      'other': list(lst_other)}
+    #decoding qcbits can be done more efficiently with leftshift which I was not aware of before writing the function
     return lst_error_qcbits
 
 
@@ -369,132 +344,6 @@ def era_modis_difference_median(filelist, era_skt_var, modis_lst_var, modis_qc_v
     #time_stacked_median = np.median(time_stacked, axis =1)
     return lst_era_diff_median_3d#, time_stacked
 
-
-#%%
-'''
-from scipy.interpolate import RegularGridInterpolator
-
-#define a function to fill the missing value in the median data
-def fill_missing_3d(time_median, lats, lons, lst_era_diff_median):
-    count = 0
-    diff_nans, _, _ = np.where(np.isnan(lst_era_diff_median))
-    no_of_nans = len(diff_nans)
-    lons = lons.flatten()
-    lats = lats.flatten()
-    #Interpolation requires all the data used to crete grid in strictly increasing
-    #But lat is in decreasing, so need to flip lat, and correspondingly flip diff data as well
-    lst_era_diff_median_flip = np.flip(lst_era_diff_median, axis = 1)
-    lats_flip = np.flip(lats,axis = 0)
-    print(lats_flip.shape)
-    print(lats_flip)
-    print(lst_era_diff_median_flip.shape)
-    print(lst_era_diff_median_flip[0,:,:])
-
-    while no_of_nans != 0:
-        diff_nan_mask = np.isnan(lst_era_diff_median_flip)
-        diff_nan_idx = np.where(diff_nan_mask)
-        #interpolate_3d = RegularGridInterpolator((time_median, lats_flip, lons), lst_era_diff_median_flip)
-        X = np.linspace(0,47,48)
-        Y = np.linspace(0,89,90)
-        Z = np.linspace(0,169,170)
-        interpolate_3d = RegularGridInterpolator((X,Y,Z), lst_era_diff_median_flip)
-
-        interpolated_data_3d = interpolate_3d(diff_nan_idx)
-        lst_era_diff_median_flip[diff_nan_idx] = interpolated_data_3d
-        diff_nans, _, _ = np.where(np.isnan(lst_era_diff_median_flip))
-        no_of_nans = len(diff_nans)
-        count +=1
-        print(no_of_nans,count)
-
-    #restore the orientation of original data
-    lst_era_diff_median_filled = np.flip(lst_era_diff_median, axis = 1)
-    return lst_era_diff_median_filled
-
-lst_era_diff_median_filled =  fill_missing_3d(time_median, lats, lons, lst_era_diff_median)
-'''
-#%%
-'''
-from scipy.interpolate import RegularGridInterpolator, interpn
-
-#define a function to fill the missing value in the median data
-#Using time, lat and lon to define grid points resulted in error
-#saying index in xi is out of bounds in dimension 0
-#next time median data was unevenly spaced as there was a jump of one month which is
-#non realistic for my case, without flipping the data gave error of "strictly increasing
-def fill_missing_3d(lst_era_diff_median):
-    count = 0
-    diff_nans, _, _ = np.where(np.isnan(lst_era_diff_median))
-    no_of_nans = len(diff_nans)
-    xx,yy,zz = lst_era_diff_median.shape
-    #define the spacing of dimensions
-    X = np.linspace(0,xx-1,xx) #indexing starts from 0 so use that for simplicity
-    Y = np.linspace(0,yy-1,yy)
-    Z = np.linspace(0,zz-1,zz)
-    points = (X,Y,Z)
-
-    while no_of_nans != 0:
-        diff_nan_mask = np.isnan(lst_era_diff_median)
-        diff_nan_idx = np.where(diff_nan_mask)
-        #interpolate_3d = RegularGridInterpolator((time_median, lats_flip, lons), lst_era_diff_median_flip)
-        #interpolate_3d = RegularGridInterpolator((X,Y,Z), lst_era_diff_median)
-        #interpolated_data_3d = interpolate_3d(diff_nan_idx)
-        interpolated_data_3d = interpn(points, lst_era_diff_median, diff_nan_idx)
-
-        lst_era_diff_median[diff_nan_idx] = interpolated_data_3d
-        diff_nans, _, _ = np.where(np.isnan(lst_era_diff_median))
-        no_of_nans = len(diff_nans)
-        count +=1
-        print(no_of_nans,count)
-
-    return lst_era_diff_median
-
-lst_era_diff_median_filled =  fill_missing_3d(lst_era_diff_median)
-'''
-#%%
-'''
-import pandas as pd
-lst_era_diff_median_pd = pd.DataFrame(lst_era_diff_median[0,:,:].copy())
-lst_era_diff_median_filled = lst_era_diff_median_pd.interpolate
-lst_era_diff_median_filled = lst_era_diff_median_filled()
-#Pandas interpolate method uses only the one dimension
-'''
-#%%
-'''
-import numpy as np
-from scipy import interpolate
-
-#https://modelhelptokyo.wordpress.com/2017/10/25/how-to-interpolate-missing-values-2d-python/
-lst_era_diff_median_mask = lst_era_diff_median[0].copy()
-lst_era_diff_median_mask = np.ma.masked_invalid(lst_era_diff_median_mask)
-xx,yy = lst_era_diff_median_mask.shape
-X = np.arange(0,yy) #indexing starts from 0 so use that for simplicity
-Y = np.arange(0,xx)
-XX,YY = np.meshgrid(X,Y)
-X1 = XX[~lst_era_diff_median_mask.mask]
-Y1 = YY[~lst_era_diff_median_mask.mask]
-newArr = lst_era_diff_median_mask[~lst_era_diff_median_mask.mask]
-X2 = XX[lst_era_diff_median_mask.mask]
-Y2 = YY[lst_era_diff_median_mask.mask]
-#%%
-#GDarr = interpolate.griddata((X1,Y1), newArr.ravel(), (XX,YY), method = 'linear')
-GDarr = interpolate.griddata((X1, Y1), newArr, (X2, Y2), 'linear')
-
-#%%
-#find the places where nan is present
-nan_pos = np.where(np.isnan(lst_era_diff_median))
-#it is not possible to interpolate the edges of each axis so remove them from the possible points to be filled
-#for that get a filter that selects nan position only for non edge positions
-nan_pos_reduced_idx = np.where(np.logical_and.reduce((nan_pos[0]!=0,nan_pos[1]!=0,nan_pos[2]!=0)))
-#apply the filter to remove edge positions
-nan_pos_reduced = (nan_pos[0][nan_pos_reduced_idx],nan_pos[1][nan_pos_reduced_idx],nan_pos[2][nan_pos_reduced_idx])
-#separate them into x,y,z cordinate points
-xnan, ynan, znan = nan_pos_reduced
-#get the first nan pixel's neighbors
-nan1_buffer = lst_era_diff_median[xnan[0]-1:xnan[0]+2, ynan[0]-1:ynan[0]+2, znan[0]-1:znan[0]+2]
-#find the mean value of surrounding pixels
-nan1_buffer_mean = np.nanmean(nan1_buffer) #5.31926...
-#This the fill value for that void point
-'''
 #%%
 #Write a function to fill the missing values in loop
 def trilinear_interpolate_fill(lst_era_diff_median, min_neighbor):
@@ -535,7 +384,7 @@ def trilinear_interpolate_fill(lst_era_diff_median, min_neighbor):
 
         #I abandoned that idea of filling continuously using the same filling values because it would create serious bias
         #especially around that area where one value will be continuously used to fill all the nans in extended voids
-        #Although the function needs to be interated many times in the second case
+        #Although the function needs to be iterated many times in the second case
 
         fill_values[ii] = nan_buffer_mean
         valid_buffer_data[ii] = no_valid
@@ -598,9 +447,9 @@ def pad_timeseries(filelist, time_var):
     timeseries_padded = np.concatenate((timeseries[0:4]-24, timeseries, timeseries[-4:]+24))
 
     return timeseries_padded
+
 #%%
-#Got this function in stackexchange answer at
-#https://dsp.stackexchange.com/questions/1676/savitzky-golay-smoothing-filter-for-not-equally-spaced-data
+#apply smoothing in timeseries
 import numpy as np
 
 def non_uniform_savgol(x, y, window, polynom):
@@ -979,5 +828,3 @@ def validation(lst_data, lst_data_filled, widx, xidx, yidx, zidx):
     value_mae = mae(lst_data_regenerate, lst_data_org)
 
     return value_rmse, value_me, value_mae
-
-
