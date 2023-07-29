@@ -32,7 +32,7 @@ yaers = list(range(2003, 2021))
 
 #%%
 #define a function to read raster data or import from the list of functions file
-from lst_era_fill_functions import pixcenters_raster, read_raster_data, read_raster_nodata
+from lst_era_fill_module import pixcenters_raster, read_raster_data, read_raster_nodata
 
 for yr in yaers:
     era5file = 'ERA5_skin_temperature_Nepal_' + str(yr) +'.nc'
